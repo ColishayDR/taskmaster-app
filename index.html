@@ -6,10 +6,10 @@
     <title>TM Phase 2</title>
     <style>
         body { background: #000; color: #00d4ff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; transition: background 0.4s; overflow: hidden; }
-        #mic-btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #222; background: #111; color: #00d4ff; font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        #mic-btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #222; background: #111; color: #00d4ff; font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); -webkit-tap-highlight-color: transparent; }
         .active { border-color: #00d4ff; animation: pulse 1.5s infinite; }
         .nudge-flash { background: #001f3f !important; }
-        #status { margin-top: 40px; text-align: center; color: #666; font-size: 16px; padding: 0 30px; min-height: 3em; }
+        #status { margin-top: 40px; text-align: center; color: #666; font-size: 14px; padding: 0 30px; min-height: 4em; line-height: 1.4; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0,212,255,0.4); } 70% { box-shadow: 0 0 0 25px rgba(0,212,255,0); } 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0); } }
     </style>
 </head>
@@ -28,64 +28,75 @@
 
         btn.onclick = async () => {
             try {
-                // TURN 1
-                status.innerText = "Listening...";
+                // TURN 1: LISTENING
+                status.innerText = "Listening for task...";
                 btn.innerText = "LISTENING...";
                 btn.classList.add('active');
                 
                 const rec = new Speech();
                 rec.start();
-                const text = await new Promise(res => rec.onresult = (e) => res(e.results[0][0].transcript));
+                const text = await new Promise((res, rej) => {
+                    rec.onresult = (e) => res(e.results[0][0].transcript);
+                    rec.onerror = (e) => rej(e.error);
+                });
                 
                 btn.classList.remove('active');
                 btn.innerText = "THINKING...";
-                status.innerText = "Consulting Gemini...";
+                status.innerText = `Heard: "${text}"\nConsulting Gemini...`;
 
-                // SUGGESTION
+                // SUGGESTION FETCH
                 const res = await fetch(GAS_URL, {
                     method: 'POST',
-                    mode: 'no-cors', // Critical for Apps Script cross-domain
                     body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })
                 });
                 
-                // Since 'no-cors' doesn't return data, we must use standard fetch for Turn 1
-                const realRes = await fetch(GAS_URL, {
-                    method: 'POST',
-                    body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })
-                });
-                const sug = await realRes.json();
+                const sug = await res.json();
 
-                // VOICE
-                const utterance = new SpeechSynthesisUtterance(`${sug.confirm_text}. ${sug.category}, ${sug.time} mins. Yes?`);
+                // DEBUG: Show what we actually got
+                console.log("Gemini Suggestion:", sug);
+                status.innerText = `DEBUG: ${JSON.stringify(sug)}`;
+
+                if (sug.error) {
+                    status.innerText = "Gemini Error: " + sug.error;
+                    return;
+                }
+
+                // VOICE OUTPUT
+                // Use a fallback if keys are missing
+                const confirm = sug.confirm_text || "Got it.";
+                const cat = sug.category || "General";
+                const time = sug.time || "15";
+                
+                const utterance = new SpeechSynthesisUtterance(`${confirm}. Category ${cat}, ${time} minutes. Yes or no?`);
                 synth.speak(utterance);
-
                 await new Promise(res => utterance.onend = res);
 
-                // TURN 2
+                // TURN 2: CONFIRMATION
                 btn.innerText = "YES / NO?";
                 const confirmRec = new Speech();
                 confirmRec.start();
                 
                 const choiceText = await new Promise(res => {
                     confirmRec.onresult = (e) => res(e.results[0][0].transcript.toLowerCase());
-                    setTimeout(() => res("timeout"), 6000);
+                    // Timeout after 7 seconds
+                    setTimeout(() => res("timeout"), 7000);
                 });
 
                 const finalStatus = choiceText.includes("yes") ? "Pending" : "Review";
                 
-                // COMMIT
+                // FINAL COMMIT
                 btn.innerText = "SAVING...";
                 await fetch(GAS_URL, {
                     method: 'POST',
                     body: JSON.stringify({ action: "commit", token: TOKEN, taskData: { ...sug, name: text, status: finalStatus }})
                 });
 
-                status.innerText = "Saved as " + finalStatus;
+                status.innerText = "Task saved as: " + finalStatus;
                 btn.innerText = "TAP TO START";
                 navigator.vibrate(finalStatus === "Pending" ? [50,50,50] : 500);
 
             } catch (err) {
-                status.innerText = "Error: " + err.message;
+                status.innerText = "System Failure: " + err.message;
                 btn.innerText = "RETRY";
             }
         };
