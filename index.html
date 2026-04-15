@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Taskmaster P1</title>
+    <style>
+        body { background: #000; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+        #mic-btn { width: 220px; height: 220px; border-radius: 50%; border: 10px solid #222; background: #111; color: #00d4ff; font-size: 20px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+        #mic-btn:active { background: #222; transform: scale(0.95); }
+        #status { margin-top: 40px; font-size: 16px; color: #666; text-align: center; max-width: 80%; }
+        .pulse { animation: pulse-blue 1.5s infinite; }
+        @keyframes pulse-blue { 0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(0, 212, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); } }
+    </style>
+</head>
+<body>
+
+    <button id="mic-btn">TAP TO TALK</button>
+    <div id="status">Cold Start Mode: Ready</div>
+
+    <script>
+        const btn = document.getElementById('mic-btn');
+        const status = document.getElementById('status');
+        
+        // CONFIGURATION
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbyOKiiauzCF1GqdhCRKTtMwYhiruHlg3MW_d5kxkUAVYajdriCUiBBt3l5LzNjOX6uE/exec";
+        const TOKEN = "2manypplTALK!!!";
+
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+
+        btn.onclick = () => {
+            try {
+                recognition.start();
+                btn.classList.add('pulse');
+                btn.innerText = "LISTENING...";
+                if (navigator.vibrate) navigator.vibrate(50);
+            } catch (e) { status.innerText = "Mic already active or error."; }
+        };
+
+        recognition.onresult = async (event) => {
+            const transcript = event.results[0][0].transcript;
+            btn.classList.remove('pulse');
+            btn.innerText = "SYNCING...";
+            status.innerText = `Heard: "${transcript}"`;
+
+            try {
+                // Background Sync Logic
+                const response = await fetch(GAS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    body: JSON.stringify({ text: transcript, token: TOKEN })
+                });
+                
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100]); // Success Vibe
+                status.innerText = "Logged successfully.";
+                btn.innerText = "TAP TO TALK";
+            } catch (err) {
+                status.innerText = "Sync failed. Will retry on next tap.";
+                btn.innerText = "RETRY";
+            }
+        };
+
+        recognition.onerror = (e) => {
+            btn.classList.remove('pulse');
+            btn.innerText = "TAP TO TALK";
+            status.innerText = "Error: " + e.error;
+        };
+    </script>
+</body>
+</html>
