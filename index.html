@@ -1,72 +1,90 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Taskmaster P1</title>
+    <title>TM Phase 2</title>
     <style>
-        body { background: #000; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
-        #mic-btn { width: 220px; height: 220px; border-radius: 50%; border: 10px solid #222; background: #111; color: #00d4ff; font-size: 20px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-        #mic-btn:active { background: #222; transform: scale(0.95); }
-        #status { margin-top: 40px; font-size: 16px; color: #666; text-align: center; max-width: 80%; }
-        .pulse { animation: pulse-blue 1.5s infinite; }
-        @keyframes pulse-blue { 0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(0, 212, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); } }
+        body { background: #000; color: #00d4ff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; transition: background 0.4s; }
+        #mic-btn { width: 200px; height: 200px; border-radius: 50%; border: 8px solid #222; background: #111; color: #00d4ff; font-size: 18px; font-weight: bold; cursor: pointer; }
+        .active { border-color: #00d4ff; box-shadow: 0 0 20px #00d4ff; }
+        .nudge { background: #001f3f !important; }
+        #status { margin-top: 30px; text-align: center; color: #666; font-size: 14px; padding: 0 20px; }
     </style>
 </head>
 <body>
-
-    <button id="mic-btn">TAP TO TALK</button>
-    <div id="status">Cold Start Mode: Ready</div>
+    <button id="mic-btn">TAP TO START</button>
+    <div id="status">Ready</div>
 
     <script>
-        const btn = document.getElementById('mic-btn');
-        const status = document.getElementById('status');
-        
-        // CONFIGURATION
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbyOKiiauzCF1GqdhCRKTtMwYhiruHlg3MW_d5kxkUAVYajdriCUiBBt3l5LzNjOX6uE/exec";
+        // REPLACE THIS WITH YOUR APPS SCRIPT URL
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbw_FYEXDVkH3Wk9_pQjAHwWv2dVFCHMViTur_wm_896bzFvuMyNT4sIwVOlamvtAoDM/exec";
         const TOKEN = "2manypplTALK!!!";
 
-        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-        recognition.lang = 'en-US';
-        recognition.interimResults = false;
+        const btn = document.getElementById('mic-btn');
+        const status = document.getElementById('status');
+        const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const synth = window.speechSynthesis;
 
-        btn.onclick = () => {
-            try {
-                recognition.start();
-                btn.classList.add('pulse');
-                btn.innerText = "LISTENING...";
-                if (navigator.vibrate) navigator.vibrate(50);
-            } catch (e) { status.innerText = "Mic already active or error."; }
-        };
+        btn.onclick = async () => {
+            const rec = new Speech();
+            
+            // TURN 1: LOGGING
+            btn.innerText = "LISTENING...";
+            btn.classList.add('active');
+            rec.start();
 
-        recognition.onresult = async (event) => {
-            const transcript = event.results[0][0].transcript;
-            btn.classList.remove('pulse');
-            btn.innerText = "SYNCING...";
-            status.innerText = `Heard: "${transcript}"`;
-
-            try {
-                // Background Sync Logic
-                const response = await fetch(GAS_URL, {
-                    method: 'POST',
-                    mode: 'no-cors', 
-                    body: JSON.stringify({ text: transcript, token: TOKEN })
-                });
+            rec.onresult = async (e) => {
+                const text = e.results[0][0].transcript;
+                btn.classList.remove('active');
+                btn.innerText = "THINKING...";
                 
-                if (navigator.vibrate) navigator.vibrate([100, 50, 100]); // Success Vibe
-                status.innerText = "Logged successfully.";
-                btn.innerText = "TAP TO TALK";
-            } catch (err) {
-                status.innerText = "Sync failed. Will retry on next tap.";
-                btn.innerText = "RETRY";
-            }
+                // Get Suggestion
+                const res = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })});
+                const sug = await res.json();
+
+                // Speak Suggestion
+                const speak = new SpeechSynthesisUtterance(`${sug.confirm_text}. ${sug.category}, ${sug.time} minutes. Yes or no?`);
+                synth.speak(speak);
+
+                speak.onend = () => {
+                    // TURN 2: CONFIRMATION
+                    btn.innerText = "YES / NO?";
+                    const confirmRec = new Speech();
+                    let heard = false;
+                    confirmRec.start();
+
+                    // Timeout / Nudge Logic
+                    setTimeout(() => {
+                        if(!heard) {
+                            navigator.vibrate([100,50,100]);
+                            document.body.classList.add('nudge');
+                            setTimeout(() => { if(!heard) finish("timeout", text, sug); }, 3000);
+                        }
+                    }, 5000);
+
+                    confirmRec.onresult = (ce) => {
+                        heard = true;
+                        document.body.classList.remove('nudge');
+                        const choice = ce.results[0][0].transcript.toLowerCase();
+                        finish(choice, text, sug);
+                    };
+                };
+            };
         };
 
-        recognition.onerror = (e) => {
-            btn.classList.remove('pulse');
-            btn.innerText = "TAP TO TALK";
-            status.innerText = "Error: " + e.error;
-        };
+        async function finish(choice, text, sug) {
+            let finalStatus = (choice.includes("yes")) ? "Pending" : "Review";
+            btn.innerText = "SAVING...";
+            await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ 
+                action: "commit", token: TOKEN, 
+                taskData: { ...sug, name: text, status: finalStatus }
+            })});
+            
+            navigator.vibrate(finalStatus === "Pending" ? [50, 50, 50] : 500);
+            btn.innerText = "TAP TO START";
+            status.innerText = "Task saved as: " + finalStatus;
+        }
     </script>
 </body>
 </html>
