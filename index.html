@@ -1,25 +1,84 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TM Phase 2</title>
+    <title>Taskmaster Phase 2</title>
     <style>
-        body { background: #000; color: #00d4ff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; transition: background 0.4s; }
-        #mic-btn { width: 200px; height: 200px; border-radius: 50%; border: 8px solid #222; background: #111; color: #00d4ff; font-size: 18px; font-weight: bold; cursor: pointer; }
-        .active { border-color: #00d4ff; box-shadow: 0 0 20px #00d4ff; }
-        .nudge { background: #001f3f !important; }
-        #status { margin-top: 30px; text-align: center; color: #666; font-size: 14px; padding: 0 20px; }
+        /* High-contrast Garage UI */
+        body { 
+            background: #000; 
+            color: #00d4ff; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0; 
+            transition: background 0.4s; 
+            overflow: hidden;
+        }
+
+        #mic-btn { 
+            width: 220px; 
+            height: 220px; 
+            border-radius: 50%; 
+            border: 8px solid #222; 
+            background: #111; 
+            color: #00d4ff; 
+            font-size: 20px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            -webkit-tap-highlight-color: transparent;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        /* Animated Pulse during listening */
+        .active { 
+            border-color: #00d4ff; 
+            animation: pulse-blue 1.5s infinite; 
+            background: #1a1a1a;
+        }
+
+        /* Visual Flash for the "Nudge" */
+        .nudge-flash { 
+            background: #001f3f !important; 
+        }
+
+        #status { 
+            margin-top: 40px; 
+            text-align: center; 
+            color: #666; 
+            font-size: 16px; 
+            padding: 0 30px; 
+            line-height: 1.5;
+            min-height: 3em;
+        }
+
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); }
+            70% { box-shadow: 0 0 0 25px rgba(0, 212, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); }
+        }
     </style>
 </head>
 <body>
+
     <button id="mic-btn">TAP TO START</button>
-    <div id="status">Ready</div>
+    <div id="status">Ready for Ingest</div>
 
     <script>
-        // REPLACE THIS WITH YOUR APPS SCRIPT URL
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbw_FYEXDVkH3Wk9_pQjAHwWv2dVFCHMViTur_wm_896bzFvuMyNT4sIwVOlamvtAoDM/exec";
-        const TOKEN = "2manypplTALK!!!";
+        /** * CONFIGURATION
+         * 1. Paste your Google Apps Script URL below.
+         * 2. Ensure the TOKEN matches your Apps Script.
+         */
+        const GAS_URL = "PASTE_YOUR_APPS_SCRIPT_URL_HERE"; 
+        const TOKEN = "Bayport_2026";
 
         const btn = document.getElementById('mic-btn');
         const status = document.getElementById('status');
@@ -27,63 +86,150 @@
         const synth = window.speechSynthesis;
 
         btn.onclick = async () => {
-            const rec = new Speech();
-            
-            // TURN 1: LOGGING
-            btn.innerText = "LISTENING...";
-            btn.classList.add('active');
-            rec.start();
-
-            rec.onresult = async (e) => {
-                const text = e.results[0][0].transcript;
-                btn.classList.remove('active');
-                btn.innerText = "THINKING...";
-                
-                // Get Suggestion
-                const res = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })});
-                const sug = await res.json();
-
-                // Speak Suggestion
-                const speak = new SpeechSynthesisUtterance(`${sug.confirm_text}. ${sug.category}, ${sug.time} minutes. Yes or no?`);
-                synth.speak(speak);
-
-                speak.onend = () => {
-                    // TURN 2: CONFIRMATION
-                    btn.innerText = "YES / NO?";
-                    const confirmRec = new Speech();
-                    let heard = false;
-                    confirmRec.start();
-
-                    // Timeout / Nudge Logic
-                    setTimeout(() => {
-                        if(!heard) {
-                            navigator.vibrate([100,50,100]);
-                            document.body.classList.add('nudge');
-                            setTimeout(() => { if(!heard) finish("timeout", text, sug); }, 3000);
-                        }
-                    }, 5000);
-
-                    confirmRec.onresult = (ce) => {
-                        heard = true;
-                        document.body.classList.remove('nudge');
-                        const choice = ce.results[0][0].transcript.toLowerCase();
-                        finish(choice, text, sug);
-                    };
-                };
-            };
+            if (!Speech) {
+                status.innerText = "Error: Browser does not support Speech Recognition.";
+                return;
+            }
+            await runTaskmaster();
         };
 
-        async function finish(choice, text, sug) {
-            let finalStatus = (choice.includes("yes")) ? "Pending" : "Review";
-            btn.innerText = "SAVING...";
-            await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ 
-                action: "commit", token: TOKEN, 
-                taskData: { ...sug, name: text, status: finalStatus }
-            })});
-            
-            navigator.vibrate(finalStatus === "Pending" ? [50, 50, 50] : 500);
-            btn.innerText = "TAP TO START";
-            status.innerText = "Task saved as: " + finalStatus;
+        async function runTaskmaster() {
+            try {
+                // TURN 1: INITIAL LOGGING
+                status.innerText = "Listening for task...";
+                btn.innerText = "LISTENING...";
+                btn.classList.add('active');
+                
+                const taskText = await listen();
+                
+                btn.classList.remove('active');
+                btn.innerText = "THINKING...";
+                status.innerText = "Consulting Gemini 3 Flash...";
+
+                // Request Suggestion from Brain
+                const sug = await getSuggestion(taskText);
+                
+                if (sug.error) throw new Error(sug.error);
+
+                status.innerText = `Gemini suggests: ${sug.category}`;
+
+                // VOICE SUGGESTION (TTS)
+                const voicePrompt = `${sug.confirm_text}. ${sug.category}, ${sug.time} minutes. Yes or no?`;
+                await speak(voicePrompt);
+
+                // TURN 2: CONFIRMATION HANDSHAKE
+                btn.innerText = "YES / NO?";
+                const confirmation = await listenWithTimeout(8000); // 8 second window
+                
+                let finalStatus = "Pending";
+                if (confirmation === "no" || confirmation === "timeout") {
+                    finalStatus = "Review";
+                }
+
+                // COMMIT TO SHEET
+                btn.innerText = "SAVING...";
+                status.innerText = `Finalizing as ${finalStatus}...`;
+                
+                await commit(taskText, sug, finalStatus);
+
+                // FEEDBACK & RESET
+                if (finalStatus === "Review") {
+                    navigator.vibrate(500); // Long pulse for Review/Timeout
+                    status.innerText = "Handshake timed out or rejected. Saved to Review.";
+                } else {
+                    navigator.vibrate([100, 50, 100]); // Happy pattern for Success
+                    status.innerText = "Task finalized in Pending.";
+                }
+
+                btn.innerText = "TAP TO START";
+
+            } catch (err) {
+                console.error(err);
+                status.innerText = "System Failure: " + err.message;
+                btn.innerText = "RETRY";
+                btn.classList.remove('active');
+                navigator.vibrate([300, 100, 300]);
+            }
+        }
+
+        // --- HELPER FUNCTIONS ---
+
+        async function getSuggestion(text) {
+            const res = await fetch(GAS_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })
+            });
+            return await res.json();
+        }
+
+        async function commit(name, sug, finalStatus) {
+            await fetch(GAS_URL, {
+                method: 'POST',
+                body: JSON.stringify({ 
+                    action: "commit", 
+                    token: TOKEN,
+                    taskData: { ...sug, name: name, status: finalStatus } 
+                })
+            });
+        }
+
+        function listen() {
+            return new Promise((resolve, reject) => {
+                const rec = new Speech();
+                rec.lang = 'en-US';
+                rec.start();
+                navigator.vibrate(50);
+                
+                rec.onresult = (e) => resolve(e.results[0][0].transcript);
+                rec.onerror = (e) => reject(new Error("Mic error: " + e.error));
+            });
+        }
+
+        function listenWithTimeout(ms) {
+            return new Promise((resolve) => {
+                const rec = new Speech();
+                rec.lang = 'en-US';
+                let heard = false;
+                rec.start();
+
+                // Nudge Logic (Starts at 5s)
+                setTimeout(() => {
+                    if (!heard) {
+                        navigator.vibrate([100, 50, 100]); // 3-pulse nudge
+                        document.body.classList.add('nudge-flash');
+                        
+                        // Final Timeout at 8s
+                        setTimeout(() => {
+                            if (!heard) {
+                                document.body.classList.remove('nudge-flash');
+                                rec.stop();
+                                resolve("timeout");
+                            }
+                        }, 3000);
+                    }
+                }, 5000);
+
+                rec.onresult = (e) => {
+                    heard = true;
+                    document.body.classList.remove('nudge-flash');
+                    resolve(e.results[0][0].transcript.toLowerCase());
+                };
+                
+                rec.onerror = () => {
+                    heard = true;
+                    resolve("timeout");
+                };
+            });
+        }
+
+        function speak(text) {
+            return new Promise((resolve) => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                utterance.onend = () => resolve();
+                synth.speak(utterance);
+            });
         }
     </script>
 </body>
