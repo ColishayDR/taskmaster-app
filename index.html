@@ -8,7 +8,6 @@
         body { background: #000; color: #00d4ff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; transition: background 0.4s; overflow: hidden; }
         #mic-btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #222; background: #111; color: #00d4ff; font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); -webkit-tap-highlight-color: transparent; }
         .active { border-color: #00d4ff; animation: pulse 1.5s infinite; }
-        .nudge-flash { background: #001f3f !important; }
         #status { margin-top: 40px; text-align: center; color: #666; font-size: 14px; padding: 0 30px; min-height: 4em; line-height: 1.4; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0,212,255,0.4); } 70% { box-shadow: 0 0 0 25px rgba(0,212,255,0); } 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0); } }
     </style>
@@ -18,7 +17,7 @@
     <div id="status">Ready</div>
 
     <script>
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbzF3H68BMYMlvLf-lKcaMJ-yt3hmjTZjhe70sbtzQ2EmwJ6gNTQOGW39gb72RYfCtWv/exec"; 
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbxUWU17Fqavs6lHNP0I1_ynNJmTLOKlAc-nryms2puxx4ec-UEch0oOOadY7sDGzJzT/exec"; 
         const TOKEN = "2manypplTALK!!!";
 
         const btn = document.getElementById('mic-btn');
@@ -28,8 +27,7 @@
 
         btn.onclick = async () => {
             try {
-                // TURN 1: LISTENING
-                status.innerText = "Listening for task...";
+                status.innerText = "Listening...";
                 btn.innerText = "LISTENING...";
                 btn.classList.add('active');
                 
@@ -41,59 +39,62 @@
                 });
                 
                 btn.classList.remove('active');
-                btn.innerText = "THINKING...";
-                status.innerText = `Heard: "${text}"\nConsulting Gemini...`;
+                if (!text || text.trim().length < 2) {
+                    status.innerText = "Didn't catch that.";
+                    btn.innerText = "TAP TO START";
+                    return;
+                }
 
-                // SUGGESTION FETCH
+                btn.innerText = "THINKING...";
+                status.innerText = `Heard: "${text}"`;
+
                 const res = await fetch(GAS_URL, {
                     method: 'POST',
                     body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })
                 });
                 
                 const sug = await res.json();
-
-                // DEBUG: Show what we actually got
                 console.log("Gemini Suggestion:", sug);
-                status.innerText = `DEBUG: ${JSON.stringify(sug)}`;
 
                 if (sug.error) {
-                    status.innerText = "Gemini Error: " + sug.error;
+                    status.innerText = "Error: " + sug.error;
+                    btn.innerText = "RETRY";
                     return;
                 }
 
-                // VOICE OUTPUT
-                // Use a fallback if keys are missing
-                const confirm = sug.confirm_text || "Got it.";
+                // Data Normalization
+                const confirm = sug.confirm_text || "Task noted.";
                 const cat = sug.category || "General";
-                const time = sug.time || "15";
+                const time = parseInt(sug.time) || 15;
                 
-                const utterance = new SpeechSynthesisUtterance(`${confirm}. Category ${cat}, ${time} minutes. Yes or no?`);
+                const utterance = new SpeechSynthesisUtterance(`${confirm}. ${cat}, ${time} minutes. Yes or no?`);
                 synth.speak(utterance);
                 await new Promise(res => utterance.onend = res);
 
-                // TURN 2: CONFIRMATION
                 btn.innerText = "YES / NO?";
                 const confirmRec = new Speech();
                 confirmRec.start();
                 
                 const choiceText = await new Promise(res => {
                     confirmRec.onresult = (e) => res(e.results[0][0].transcript.toLowerCase());
-                    // Timeout after 7 seconds
                     setTimeout(() => res("timeout"), 7000);
                 });
 
                 const finalStatus = choiceText.includes("yes") ? "Pending" : "Review";
                 
-                // FINAL COMMIT
                 btn.innerText = "SAVING...";
                 await fetch(GAS_URL, {
                     method: 'POST',
-                    body: JSON.stringify({ action: "commit", token: TOKEN, taskData: { ...sug, name: text, status: finalStatus }})
+                    body: JSON.stringify({ 
+                        action: "commit", 
+                        token: TOKEN, 
+                        taskData: { ...sug, name: text, status: finalStatus, time: time }
+                    })
                 });
 
-                status.innerText = "Task saved as: " + finalStatus;
+                status.innerText = "Saved as: " + finalStatus;
                 btn.innerText = "TAP TO START";
-                navigator.vibrate(finalStatus === "Pending" ? [50,50,50] : 500);
+                if (window.navigator.vibrate) navigator.vibrate(finalStatus === "Pending" ? [50,50,50] : 500);
 
             } catch (err) {
                 status.innerText = "System Failure: " + err.message;
