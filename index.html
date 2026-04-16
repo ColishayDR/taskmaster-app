@@ -17,7 +17,7 @@
     <div id="status">Ready</div>
 
     <script>
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbxrA59TqX01Us0hT3zglAHFUsfomdXE8gsnxyCoTURWDmDRT7cxZXvLG7RzLIWgBydu/exec"; 
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbwK6EUlb8FoNQUrpQ7h5h_tOmHdUMi9uezB-QcCH8juki6dYzwWNMRK_a5MJ-7A3Wsx/exec"; 
         const TOKEN = "2manypplTALK!!!";
 
         const btn = document.getElementById('mic-btn');
@@ -25,80 +25,116 @@
         const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
         const synth = window.speechSynthesis;
 
-        btn.onclick = async () => {
-            try {
-                status.innerText = "Listening...";
-                btn.innerText = "LISTENING...";
-                btn.classList.add('active');
-                
+        // Helper: Speak and wait for it to finish
+        const speak = (msg) => {
+            return new Promise(resolve => {
+                const utter = new SpeechSynthesisUtterance(msg);
+                utter.onend = resolve;
+                synth.speak(utter);
+            });
+        };
+
+        // Helper: Listen for a single voice response
+        const listen = () => {
+            return new Promise((resolve, reject) => {
                 const rec = new Speech();
                 rec.start();
-                const text = await new Promise((res, rej) => {
-                    rec.onresult = (e) => res(e.results[0][0].transcript);
-                    rec.onerror = (e) => rej(e.error);
-                });
+                rec.onresult = (e) => resolve(e.results[0][0].transcript);
+                rec.onerror = (e) => reject(e);
+                setTimeout(() => resolve("timeout"), 8000);
+            });
+        };
+
+        btn.onclick = async () => {
+            try {
+                btn.classList.add('active');
+                status.innerText = "Listening...";
+                btn.innerText = "LISTENING...";
                 
+                const rawInput = await listen();
                 btn.classList.remove('active');
-                if (!text || text.trim().length < 2) {
+
+                if (rawInput === "timeout" || rawInput.length < 2) {
                     status.innerText = "Didn't catch that.";
                     btn.innerText = "TAP TO START";
                     return;
                 }
 
                 btn.innerText = "THINKING...";
-                status.innerText = `Heard: "${text}"`;
+                status.innerText = `Heard: "${rawInput}"`;
 
-                const res = await fetch(GAS_URL, {
+                // STEP 1: Get Gemini's intent analysis
+                const suggestRes = await fetch(GAS_URL, {
                     method: 'POST',
-                    body: JSON.stringify({ action: "suggest", text: text, token: TOKEN })
+                    body: JSON.stringify({ action: "suggest", text: rawInput, token: TOKEN })
                 });
-                
-                const sug = await res.json();
-                console.log("Gemini Suggestion:", sug);
+                let sug = await suggestRes.json();
 
-                if (sug.error) {
-                    status.innerText = "Error: " + sug.error;
-                    btn.innerText = "RETRY";
-                    return;
+                if (sug.error) throw new Error(sug.error);
+
+                // STEP 2: Handle "UPDATE" (Completion) vs "CREATE" (New Task)
+                if (sug.intent === "UPDATE") {
+                    btn.innerText = "MATCHING...";
+                    const commitRes = await fetch(GAS_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: "commit", token: TOKEN, taskData: sug })
+                    });
+                    let result = await commitRes.json();
+
+                    // AMBIGUITY LOOP: If more than one match found
+                    if (result.status === "need_clarification") {
+                        await speak(result.message);
+                        btn.innerText = "WHICH ONE?";
+                        btn.classList.add('active');
+                        
+                        const choice = await listen();
+                        btn.classList.remove('active');
+
+                        // Re-submit with the specific choice
+                        sug.confirm_text = choice; 
+                        btn.innerText = "UPDATING...";
+                        const finalRes = await fetch(GAS_URL, {
+                            method: 'POST',
+                            body: JSON.stringify({ action: "commit", token: TOKEN, taskData: sug })
+                        });
+                        result = await finalRes.json();
+                    }
+
+                    status.innerText = result.action === "updated" ? `Updated: ${result.task}` : "Task Created Instead";
+                    await speak(result.action === "updated" ? "Task complete." : "Created new task.");
+
+                } else {
+                    // STEP 3: Handle Standard CREATE flow
+                    const confirmMsg = `${sug.confirm_text}. ${sug.category}, ${sug.time} minutes. Yes?`;
+                    await speak(confirmMsg);
+
+                    btn.innerText = "YES / NO?";
+                    btn.classList.add('active');
+                    const choiceText = (await listen()).toLowerCase();
+                    btn.classList.remove('active');
+
+                    const finalStatus = choiceText.includes("yes") ? "Pending" : "Review";
+                    btn.innerText = "SAVING...";
+
+                    await fetch(GAS_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ 
+                            action: "commit", 
+                            token: TOKEN, 
+                            taskData: { ...sug, name: rawInput, status: finalStatus }
+                        })
+                    });
+
+                    status.innerText = "Saved as: " + finalStatus;
+                    if (window.navigator.vibrate) navigator.vibrate(50);
                 }
 
-                // Data Normalization
-                const confirm = sug.confirm_text || "Task noted.";
-                const cat = sug.category || "General";
-                const time = parseInt(sug.time) || 15;
-                
-                const utterance = new SpeechSynthesisUtterance(`${confirm}. ${cat}, ${time} minutes. Yes or no?`);
-                synth.speak(utterance);
-                await new Promise(res => utterance.onend = res);
-
-                btn.innerText = "YES / NO?";
-                const confirmRec = new Speech();
-                confirmRec.start();
-                
-                const choiceText = await new Promise(res => {
-                    confirmRec.onresult = (e) => res(e.results[0][0].transcript.toLowerCase());
-                    setTimeout(() => res("timeout"), 7000);
-                });
-
-                const finalStatus = choiceText.includes("yes") ? "Pending" : "Review";
-                
-                btn.innerText = "SAVING...";
-                await fetch(GAS_URL, {
-                    method: 'POST',
-                    body: JSON.stringify({ 
-                        action: "commit", 
-                        token: TOKEN, 
-                        taskData: { ...sug, name: text, status: finalStatus, time: time }
-                    })
-                });
-
-                status.innerText = "Saved as: " + finalStatus;
                 btn.innerText = "TAP TO START";
-                if (window.navigator.vibrate) navigator.vibrate(finalStatus === "Pending" ? [50,50,50] : 500);
 
             } catch (err) {
-                status.innerText = "System Failure: " + err.message;
+                status.innerText = "Error: " + err.message;
                 btn.innerText = "RETRY";
+                console.error(err);
             }
         };
     </script>
